@@ -1,0 +1,21 @@
+{
+  "name": "qmail",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Qmail — a closed, post-quantum-secure email platform (ML-KEM-768 + ML-DSA-65)",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "build:crypto": "npm run build --workspace @qmail/crypto",
+    "test:crypto": "npm run test --workspace @qmail/crypto",
+    "dev:web": "npm run dev --workspace @qmail/web",
+    "build:web": "npm run build --workspace @qmail/web",
+    "dev:mobile": "npm run start --workspace @qmail/mobile",
+    "test": "npm run test --workspace @qmail/crypto"
+  }
+}

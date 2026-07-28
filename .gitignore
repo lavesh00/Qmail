@@ -1,0 +1,51 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# build output
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# expo
+.expo/
+.expo-shared/
+android/
+ios/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
+
+# environment
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# supabase
+supabase/.branches
+supabase/.temp
+supabase/.env
+
+# editors / os
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+
+# local tool state
+.claude/settings.local.json
+
+# logs
+npm-debug.log*
+yarn-error.log*
+*.log
+
+# test output
+coverage/

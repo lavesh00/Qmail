@@ -1,0 +1,43 @@
+/*
+ * Qmail design tokens.
+ *
+ * The palette is deliberately small: one dominant colour, one accent, one
+ * neutral, plus two state colours that are only ever used for signature
+ * verification results. Nothing else gets added here.
+ */
+:root {
+  /* Dominant — deep ink blue, near black. */
+  --ink: #0b1120;
+  --ink-raised: #121a2c;
+  --ink-line: #1e293b;
+
+  /* Accent — controlled cyan teal. One thing per screen, never more. */
+  --accent: #3fb9ae;
+  --accent-quiet: rgba(63, 185, 174, 0.16);
+
+  /* Neutral — warm paper white, for light content surfaces. */
+  --paper: #f7f5f0;
+  --paper-dim: #d8d5cd;
+  --paper-faint: #8b8a85;
+
+  /* State — signature verified / signature failed. Nowhere else. */
+  --state-verified: #4f9d72;
+  --state-failed: #b4544c;
+
+  /* Type scale */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', 'Consolas', monospace;
+
+  /* Spacing rhythm */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  --radius: 6px;
+  --radius-lg: 10px;
+}

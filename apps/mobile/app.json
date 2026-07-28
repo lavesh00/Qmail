@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "Qmail",
+    "slug": "qmail",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "qmail",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "backgroundColor": "#0B1120",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#0B1120"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.qmail.app"
+    },
+    "android": {
+      "package": "com.qmail.app",
+      "edgeToEdgeEnabled": true
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": ["expo-router"],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

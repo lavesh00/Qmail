@@ -1,0 +1,7 @@
+# Normalise line endings so the three of us on different machines don't
+# generate whitespace-only diffs.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ttf binary
+*.wasm binary
