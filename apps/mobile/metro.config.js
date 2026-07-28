@@ -39,4 +39,20 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     : context.resolveRequest(context, moduleName, platform);
 };
 
+/**
+ * In a monorepo, Metro's server root is the lowest common ancestor of the
+ * project and its watch folders — the repo root, not apps/mobile. A debug build
+ * still asks for `/index.bundle`, which resolves against that root and 404s.
+ * Rewrite it to the app's real entry point.
+ */
+config.server = config.server ?? {};
+config.server.rewriteRequestUrl = (url) => {
+  const [path, query] = url.split('?');
+  if (path === '/index.bundle' || path === '/.expo/.virtual-metro-entry.bundle') {
+    const entry = '/node_modules/expo-router/entry.bundle';
+    return query ? `${entry}?${query}` : entry;
+  }
+  return url;
+};
+
 module.exports = config;

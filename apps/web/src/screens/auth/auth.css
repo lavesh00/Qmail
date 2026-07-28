@@ -1,0 +1,258 @@
+.auth {
+  position: relative;
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6) var(--space-4);
+  overflow: hidden;
+}
+
+/*
+ * The lattice: two sets of thin lines on a fixed grid. Structural, not a glow —
+ * it has hard edges, no blur, and sits at an opacity where it reads as paper
+ * texture rather than as an effect.
+ */
+.auth__lattice {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(to right, rgba(63, 185, 174, 0.07) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(63, 185, 174, 0.07) 1px, transparent 1px);
+  background-size: 56px 56px;
+  /* Fades toward the edges so the panel is not sitting in a hard-edged box. */
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 45%, #000 40%, transparent 100%);
+  pointer-events: none;
+}
+
+.auth__panel {
+  position: relative;
+  width: 100%;
+  max-width: 380px;
+}
+
+.auth__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--accent);
+  margin-bottom: var(--space-7);
+}
+
+.auth__wordmark {
+  color: var(--paper);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.auth__title {
+  margin: 0 0 var(--space-2);
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.auth__lede {
+  margin: 0 0 var(--space-6);
+  color: var(--paper-faint);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.auth__footer {
+  margin-top: var(--space-6);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--ink-line);
+  color: var(--paper-faint);
+  font-size: 13px;
+}
+
+/* --- form ---------------------------------------------------------------- */
+
+.field {
+  margin-bottom: var(--space-4);
+}
+
+.field__label {
+  display: block;
+  margin-bottom: var(--space-2);
+  font-size: 13px;
+  color: var(--paper-dim);
+}
+
+.field__input {
+  width: 100%;
+  padding: 10px 12px;
+  background: transparent;
+  border: 1px solid var(--ink-line);
+  border-radius: var(--radius);
+  color: var(--paper);
+  font-family: inherit;
+  font-size: 15px;
+}
+
+.field__input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.field__input::placeholder {
+  color: var(--paper-faint);
+}
+
+/* The address field reads as one unit: an editable handle and a fixed domain. */
+.field__address {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--ink-line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.field__address:focus-within {
+  border-color: var(--accent);
+}
+
+.field__address .field__input {
+  border: none;
+  border-radius: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.field__domain {
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  background: var(--ink-raised);
+  border-left: 1px solid var(--ink-line);
+  color: var(--paper-faint);
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.field__hint {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  color: var(--paper-faint);
+  line-height: 1.5;
+}
+
+.field__error {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  color: var(--state-failed);
+}
+
+.button {
+  width: 100%;
+  padding: 11px 16px;
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.button:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.button--quiet {
+  background: transparent;
+  border: 1px solid var(--ink-line);
+  color: var(--paper);
+  font-weight: 500;
+}
+
+.button--quiet:hover:not(:disabled) {
+  border-color: var(--paper-faint);
+  filter: none;
+}
+
+.link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  font-size: inherit;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+.notice {
+  display: flex;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  padding: var(--space-3);
+  border-left: 2px solid var(--state-failed);
+  color: var(--paper-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.notice__icon {
+  color: var(--state-failed);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  color: var(--paper-dim);
+  font-size: 13px;
+}
+
+/* --- the fingerprint handed over after registration ----------------------- */
+
+.handover__address {
+  margin: 0 0 var(--space-5);
+  font-family: var(--font-mono);
+  font-size: 16px;
+  color: var(--accent);
+}
+
+.handover__label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  color: var(--paper-faint);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.handover__fingerprint {
+  margin: 0 0 var(--space-4);
+  padding-left: var(--space-4);
+  border-left: 2px solid var(--accent);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.9;
+  word-spacing: 2px;
+}
+
+.handover__warning {
+  margin: 0 0 var(--space-6);
+  color: var(--paper-dim);
+  font-size: 13px;
+  line-height: 1.6;
+}

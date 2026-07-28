@@ -22,11 +22,26 @@ export default function Parity() {
         capabilities.provider = installCrypto();
         if (!cancelled) setCaps({ ...capabilities });
         const result = await runParityCheck('mobile (android)');
+
+        // Also logged so the digest can be read straight out of logcat and
+        // compared with the Node and browser runs without squinting at a screen.
+        console.log(`QMAIL_PARITY digest=${result.digest} passed=${result.passed}`);
+        for (const check of result.checks) {
+          if (!check.passed) {
+            console.log(`QMAIL_PARITY FAIL ${check.name}: ${check.detail ?? ''}`);
+          }
+        }
+
         if (!cancelled) setReport(result);
       } catch (cause) {
+        const detail = cause instanceof Error ? `${cause.message}\n\n${cause.stack ?? ''}` : String(cause);
+        console.log(`QMAIL_PARITY ERROR ${detail}`);
+        console.log(
+          `QMAIL_PARITY CAPS crypto=${capabilities.hasGlobalCrypto} random=${capabilities.hasGetRandomValues} subtle=${capabilities.hasSubtle} wasm=${capabilities.hasWebAssembly} wasmValid=${capabilities.wasmCanInstantiate}`,
+        );
         if (!cancelled) {
           setCaps({ ...capabilities });
-          setError(cause instanceof Error ? `${cause.message}\n\n${cause.stack ?? ''}` : String(cause));
+          setError(detail);
         }
       }
     })();
