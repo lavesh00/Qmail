@@ -1,8 +1,10 @@
+import ParityPanel from './dev/ParityPanel';
+
+/**
+ * Phase 1: the app's only job so far is to prove the shared crypto module runs
+ * in a browser and produces byte-identical results to the Node run. Real
+ * screens arrive in Phase 3.
+ */
 export default function App() {
-  return (
-    <main className="boot">
-      <h1 className="boot__wordmark">Qmail</h1>
-      <p className="boot__note">Scaffolding online. No cryptography wired up yet.</p>
-    </main>
-  );
+  return <ParityPanel />;
 }

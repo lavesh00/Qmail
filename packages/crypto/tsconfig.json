@@ -2,7 +2,12 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "./dist",
-    "rootDir": "./src"
+    "rootDir": "./src",
+    // DOM is pulled in for the WebCrypto type declarations (SubtleCrypto,
+    // CryptoKey, AesGcmParams) and for TextEncoder/TextDecoder. Types only —
+    // no DOM API is touched at runtime, which is what keeps this package
+    // usable unchanged from React Native.
+    "lib": ["ES2022", "DOM"]
   },
   "include": ["src/**/*.ts"]
 }
