@@ -26,3 +26,7 @@ export {
   type MessageRow,
   type UserRow,
 } from './rows.js';
+
+// Re-exported so an app can type an attachment without also importing the
+// crypto package directly just for one interface.
+export type { Attachment, MessageContent } from '@qmail/crypto';
