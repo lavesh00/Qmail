@@ -12,10 +12,20 @@ import {
   View,
 } from 'react-native';
 import { router } from 'expo-router';
-import type { Account, Folder, MessageSummary, OpenedMail } from '@qmail/core';
-import { QMAIL_DOMAIN, QmailError } from '@qmail/core';
-import { ALGORITHMS } from '@qmail/crypto';
+import type { Account, Contact, Draft, Folder, MessageSummary, OpenedMail } from '@qmail/core';
+import {
+  QMAIL_DOMAIN,
+  QmailError,
+  deleteDraft,
+  listDrafts,
+  saveDraft,
+} from '@qmail/core';
+// ALGORITHMS and toBase64 are pure data and pure JavaScript, so they are safe to
+// call in Hermes. Anything that actually computes — hashing, signing, KEM — has
+// to go through the engine, because Hermes has no WebCrypto and no WebAssembly.
+import { ALGORITHMS, toBase64 } from '@qmail/crypto';
 import { qmail } from '../lib/qmail';
+import { createSecureStoreStorage } from '../lib/securestore-storage';
 import { useSession } from '../state/session';
 import { Icon, type IconName } from '../ui/Icon';
 import { colors, radius, space } from '../theme/colors';
@@ -23,14 +33,23 @@ import { colors, radius, space } from '../theme/colors';
 type View_ =
   | { name: 'folder' }
   | { name: 'message'; id: string }
-  | { name: 'compose'; to?: string; subject?: string }
+  | { name: 'compose'; to?: string; subject?: string; draft?: Draft }
+  | { name: 'drafts' }
+  | { name: 'contacts' }
   | { name: 'settings' };
 
-const TABS: { folder: Folder; label: string; icon: IconName }[] = [
-  { folder: 'inbox', label: 'Inbox', icon: 'inbox' },
-  { folder: 'sent', label: 'Sent', icon: 'send' },
-  { folder: 'trash', label: 'Trash', icon: 'trash' },
+/** The bottom bar carries folders; drafts and contacts sit alongside them. */
+type Tab = { key: Folder | 'drafts' | 'contacts'; label: string; icon: IconName };
+
+const TABS: Tab[] = [
+  { key: 'inbox', label: 'Inbox', icon: 'inbox' },
+  { key: 'sent', label: 'Sent', icon: 'send' },
+  { key: 'drafts', label: 'Drafts', icon: 'compose' },
+  { key: 'contacts', label: 'People', icon: 'users' },
+  { key: 'trash', label: 'Trash', icon: 'trash' },
 ];
+
+const storage = createSecureStoreStorage();
 
 export function Mailbox({ account }: { account: Account }) {
   const [folder, setFolder] = useState<Folder>('inbox');
@@ -63,7 +82,7 @@ export function Mailbox({ account }: { account: Account }) {
       {view.name === 'folder' ? (
         <>
           <View style={styles.head}>
-            <Text style={styles.title}>{TABS.find((t) => t.folder === folder)?.label}</Text>
+            <Text style={styles.title}>{TABS.find((t) => t.key === folder)?.label}</Text>
             <Pressable onPress={() => setView({ name: 'settings' })} hitSlop={10}>
               <Icon name="settings" size={20} color={colors.paperFaint} />
             </Pressable>
@@ -152,25 +171,30 @@ export function Mailbox({ account }: { account: Account }) {
             <Icon name="compose" size={20} color={colors.ink} />
           </Pressable>
 
-          <View style={styles.tabs}>
-            {TABS.map((tab) => (
-              <Pressable
-                key={tab.folder}
-                style={styles.tab}
-                onPress={() => setFolder(tab.folder)}
-              >
-                <Icon
-                  name={tab.icon}
-                  size={20}
-                  color={folder === tab.folder ? colors.paper : colors.paperFaint}
-                />
-                <Text style={folder === tab.folder ? styles.tabLabelOn : styles.tabLabel}>
-                  {tab.label}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
+          <TabBar
+            current={folder}
+            onSelect={(key) => {
+              if (key === 'drafts') setView({ name: 'drafts' });
+              else if (key === 'contacts') setView({ name: 'contacts' });
+              else setFolder(key);
+            }}
+          />
         </>
+      ) : null}
+
+      {view.name === 'drafts' ? (
+        <Drafts
+          address={account.address}
+          onOpen={(draft) => setView({ name: 'compose', draft })}
+          onBack={() => setView({ name: 'folder' })}
+        />
+      ) : null}
+
+      {view.name === 'contacts' ? (
+        <Contacts
+          onWrite={(to) => setView({ name: 'compose', to })}
+          onBack={() => setView({ name: 'folder' })}
+        />
       ) : null}
 
       {view.name === 'message' ? (
@@ -186,9 +210,12 @@ export function Mailbox({ account }: { account: Account }) {
 
       {view.name === 'compose' ? (
         <Compose
+          address={account.address}
+          draft={view.draft}
           initialTo={view.to ?? ''}
           initialSubject={view.subject ?? ''}
           onClose={() => setView({ name: 'folder' })}
+          onSavedDraft={() => setView({ name: 'drafts' })}
           onSent={() => {
             setFolder('sent');
             setView({ name: 'folder' });
@@ -199,6 +226,161 @@ export function Mailbox({ account }: { account: Account }) {
       {view.name === 'settings' ? (
         <Settings account={account} onBack={() => setView({ name: 'folder' })} />
       ) : null}
+    </View>
+  );
+}
+
+function TabBar({
+  current,
+  onSelect,
+}: {
+  current: Tab['key'];
+  onSelect: (key: Tab['key']) => void;
+}) {
+  return (
+    <View style={styles.tabs}>
+      {TABS.map((tab) => (
+        <Pressable key={tab.key} style={styles.tab} onPress={() => onSelect(tab.key)}>
+          <Icon
+            name={tab.icon}
+            size={20}
+            color={current === tab.key ? colors.paper : colors.paperFaint}
+          />
+          <Text style={current === tab.key ? styles.tabLabelOn : styles.tabLabel}>{tab.label}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+function Drafts({
+  address,
+  onOpen,
+  onBack,
+}: {
+  address: string;
+  onOpen: (draft: Draft) => void;
+  onBack: () => void;
+}) {
+  const [drafts, setDrafts] = useState<Draft[] | null>(null);
+
+  async function load() {
+    setDrafts(await listDrafts(storage, address));
+  }
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [address]);
+
+  return (
+    <View style={styles.screen}>
+      <View style={styles.head}>
+        <Pressable onPress={onBack} hitSlop={10}>
+          <Icon name="back" size={20} color={colors.paperFaint} />
+        </Pressable>
+        <Text style={styles.title}>Drafts</Text>
+      </View>
+
+      <ScrollView style={styles.list}>
+        <Text style={styles.note}>
+          Drafts stay on this device and are never uploaded. Something you have not decided to send
+          should not be sitting on a server.
+        </Text>
+
+        {drafts !== null && drafts.length === 0 ? (
+          <Text style={styles.empty}>No drafts saved.</Text>
+        ) : null}
+
+        {drafts?.map((draft) => (
+          <View key={draft.id} style={styles.draftRow}>
+            <Pressable style={styles.draftOpen} onPress={() => onOpen(draft)}>
+              <Text style={styles.who} numberOfLines={1}>
+                {draft.to ? `${draft.to}@${QMAIL_DOMAIN}` : 'No recipient'}
+              </Text>
+              <Text style={styles.subject} numberOfLines={1}>
+                {draft.subject || '(no subject)'}
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={async () => {
+                await deleteDraft(storage, address, draft.id);
+                await load();
+              }}
+              hitSlop={10}
+            >
+              <Icon name="trash" size={18} color={colors.paperFaint} />
+            </Pressable>
+          </View>
+        ))}
+      </ScrollView>
+    </View>
+  );
+}
+
+function Contacts({ onWrite, onBack }: { onWrite: (to: string) => void; onBack: () => void }) {
+  const [rows, setRows] = useState<{ contact: Contact; fingerprint: string }[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const contacts = await qmail.loadContacts();
+        const withPrints = await Promise.all(
+          contacts.map(async (contact) => ({
+            contact,
+            // Through the engine, not the crypto module directly: SHA-256 needs
+            // WebCrypto, which only exists on the far side of the bridge.
+            fingerprint: await qmail.engine.fingerprint({
+              kemPublicKey: toBase64(contact.kemPublicKey),
+              sigPublicKey: toBase64(contact.sigPublicKey),
+            }),
+          })),
+        );
+        if (!cancelled) setRows(withPrints);
+      } catch (cause) {
+        console.log(`contacts failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+        if (!cancelled) setRows([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <View style={styles.screen}>
+      <View style={styles.head}>
+        <Pressable onPress={onBack} hitSlop={10}>
+          <Icon name="back" size={20} color={colors.paperFaint} />
+        </Pressable>
+        <Text style={styles.title}>Contacts</Text>
+      </View>
+
+      <ScrollView style={styles.list}>
+        <Text style={styles.note}>
+          Built automatically from people you have exchanged mail with. Compare a fingerprint here
+          against the one its owner reads you out loud.
+        </Text>
+
+        {rows !== null && rows.length === 0 ? (
+          <Text style={styles.empty}>
+            No contacts yet. Anyone you write to, or hear from, will be added here.
+          </Text>
+        ) : null}
+
+        {rows?.map(({ contact, fingerprint }) => (
+          <View key={contact.address} style={styles.contactRow}>
+            <View style={styles.contactHead}>
+              <Text style={styles.contactAddress}>{contact.address}</Text>
+              <Pressable onPress={() => onWrite(contact.address)} hitSlop={10}>
+                <Text style={styles.action}>Write</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.contactPrint}>{fingerprint}</Text>
+          </View>
+        ))}
+      </ScrollView>
     </View>
   );
 }
@@ -322,21 +504,37 @@ function MessageView({
 }
 
 function Compose({
+  address,
+  draft,
   initialTo,
   initialSubject,
   onClose,
   onSent,
+  onSavedDraft,
 }: {
+  address: string;
+  draft?: Draft;
   initialTo: string;
   initialSubject: string;
   onClose: () => void;
   onSent: () => void;
+  onSavedDraft: () => void;
 }) {
-  const [to, setTo] = useState(initialTo.replace(`@${QMAIL_DOMAIN}`, ''));
-  const [subject, setSubject] = useState(initialSubject);
-  const [body, setBody] = useState('');
+  const [to, setTo] = useState((draft?.to ?? initialTo).replace(`@${QMAIL_DOMAIN}`, ''));
+  const [subject, setSubject] = useState(draft?.subject ?? initialSubject);
+  const [body, setBody] = useState(draft?.body ?? '');
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+
+  async function keepDraft() {
+    await saveDraft(storage, address, {
+      ...(draft?.id ? { id: draft.id } : {}),
+      to,
+      subject,
+      body,
+    });
+    onSavedDraft();
+  }
 
   async function submit() {
     if (!to.trim() || sending) return;
@@ -348,6 +546,10 @@ function Compose({
         subject: subject.trim(),
         body,
       });
+      // Only once it is genuinely delivered does the draft stop being needed.
+      if (draft?.id) {
+        await deleteDraft(storage, address, draft.id);
+      }
       onSent();
     } catch (cause) {
       setError(cause instanceof QmailError ? cause.message : 'Your message could not be sent.');
@@ -365,7 +567,10 @@ function Compose({
           <Pressable onPress={onClose} hitSlop={10}>
             <Icon name="back" size={20} color={colors.paperFaint} />
           </Pressable>
-          <Text style={styles.title}>New message</Text>
+          <Text style={styles.title}>{draft ? 'Edit draft' : 'New message'}</Text>
+          <Pressable onPress={() => void keepDraft()} hitSlop={10} disabled={sending}>
+            <Text style={styles.action}>Save draft</Text>
+          </Pressable>
         </View>
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -583,8 +788,33 @@ const styles = StyleSheet.create({
     paddingTop: space.s3,
   },
   tab: { flex: 1, alignItems: 'center', gap: 4 },
-  tabLabel: { color: colors.paperFaint, fontSize: 11 },
-  tabLabelOn: { color: colors.paper, fontSize: 11, fontWeight: '600' },
+  tabLabel: { color: colors.paperFaint, fontSize: 10 },
+  tabLabelOn: { color: colors.paper, fontSize: 10, fontWeight: '600' },
+
+  draftRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.s3,
+    paddingVertical: space.s3,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.inkLine,
+  },
+  draftOpen: { flex: 1 },
+
+  contactRow: {
+    paddingVertical: space.s4,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.inkLine,
+  },
+  contactHead: { flexDirection: 'row', alignItems: 'baseline', gap: space.s3 },
+  contactAddress: { color: colors.paper, fontFamily: mono, fontSize: 13, flex: 1 },
+  contactPrint: {
+    color: colors.paperFaint,
+    fontFamily: mono,
+    fontSize: 10,
+    lineHeight: 17,
+    marginTop: space.s2,
+  },
 
   mailSubject: { color: colors.paper, fontSize: 21, fontWeight: '600', marginBottom: space.s3 },
   mailMeta: { color: colors.paperDim, fontFamily: mono, fontSize: 12, marginBottom: 2 },
