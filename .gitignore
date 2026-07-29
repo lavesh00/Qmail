@@ -56,3 +56,7 @@ packages/crypto/wasm/
 # generated WebView crypto host bundle
 apps/mobile/lib/crypto-host.generated.ts
 apps/mobile/bridge/build/
+
+# vercel cli local project link, and the OIDC token it drops at the repo root
+.vercel
+/.env.local
