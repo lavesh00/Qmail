@@ -286,6 +286,12 @@ export class QmailClient {
   async login(address: string, password: string): Promise<Account> {
     const normalised = address.trim().toLowerCase();
 
+    // Captured so a half-completed sign-in can be undone. Signing in is two
+    // independent steps — the server issuing a session, and this device opening
+    // its keystore — and the second can fail after the first has succeeded.
+    const previousAddress = await this.storage.get(LAST_ADDRESS_KEY);
+    const previousAccount = this.account;
+
     const { data, error } = await this.supabase.auth.signInWithPassword({
       email: normalised,
       password,
@@ -295,8 +301,24 @@ export class QmailClient {
     }
 
     this.account = { id: data.user.id, address: normalised };
+
+    try {
+      await this.unlock(password);
+    } catch (cause) {
+      // The password was right and the server let us in, but this device holds
+      // no keys for the account. Leaving the session in place would strand the
+      // device signed in as a mailbox it cannot read — and worse, would
+      // displace an account whose keys *are* here, logging that one out on the
+      // next restart. Undo the whole thing.
+      await this.supabase.auth.signOut().catch(() => undefined);
+      this.account = previousAccount;
+      if (previousAddress) {
+        await this.storage.set(LAST_ADDRESS_KEY, previousAddress);
+      }
+      throw cause;
+    }
+
     await this.storage.set(LAST_ADDRESS_KEY, normalised);
-    await this.unlock(password);
     return this.account;
   }
 
@@ -316,8 +338,13 @@ export class QmailClient {
 
     const raw = await this.storage.get(keystoreKey(address));
     if (!raw) {
+      // Say what to do, not only what went wrong. Someone hitting this has
+      // usually just registered on another device and reasonably expects the
+      // account to follow them.
       throw new QmailError(
-        `This device holds no keys for ${address}. Keys live only on the device that registered them, so this account cannot be opened here.`,
+        `Your password was accepted, but this device holds no keys for ${address}. ` +
+          `Qmail keys are generated on one device and never leave it, so a mailbox can only be opened where it was created. ` +
+          `Open ${address} on the device you registered it on, or claim a new address here.`,
       );
     }
 

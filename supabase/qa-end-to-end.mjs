@@ -41,7 +41,9 @@ const ACCESS_TOKEN = process.env.SUPABASE_ACCESS_TOKEN;
 
 let passed = 0;
 let failed = 0;
+/** Ids of every account this run created, so the teardown can name them all. */
 const cleanup = [];
+const cleanupAddresses = [];
 
 async function check(name, run) {
   try {
@@ -102,6 +104,7 @@ await check('two fresh accounts register', async () => {
   assert(/^([0-9A-F]{4} ){15}[0-9A-F]{4}$/.test(a.fingerprint), 'fingerprint is malformed');
   assert(a.fingerprint !== b.fingerprint, 'two accounts produced the same fingerprint');
   cleanup.push(alice.currentAccount().id, bob.currentAccount().id);
+  cleanupAddresses.push(alice.currentAccount().address, bob.currentAccount().address);
 });
 
 // --- 2. A message with an attachment ---------------------------------------
@@ -271,7 +274,63 @@ await check('an oversized attachment is refused before anything is sent', async 
   assert(/limited to/.test(message), `expected a size refusal, got: ${message}`);
 });
 
-// --- 5. Locking ------------------------------------------------------------
+// --- 5. Signing in from a device that does not hold the keys ---------------
+
+await check('a second device is refused, and told why in terms it can act on', async () => {
+  // Single-device custody: the keys were generated on Alice's device and never
+  // left it. Another device with the right password still cannot open the
+  // mailbox, and should say so in a way that points somewhere.
+  const otherDevice = newClient();
+
+  let message = null;
+  try {
+    await otherDevice.login(alice.currentAccount().address, PASSWORD);
+  } catch (error) {
+    message = error.message;
+  }
+
+  assert(message !== null, 'a device with no keys was allowed to open the mailbox');
+  assert(
+    /holds no keys/.test(message) && /claim a new address/i.test(message),
+    `the refusal should explain and offer a way forward, got: ${message}`,
+  );
+});
+
+await check('a refused sign-in leaves no session behind', async () => {
+  // The password is correct, so Supabase issues a session before the keystore
+  // lookup fails. Leaving that session in place would strand the device signed
+  // in as a mailbox it cannot read — and would displace an account whose keys
+  // are on the device, logging that one out on the next restart.
+  const otherDevice = newClient();
+  await otherDevice.login(alice.currentAccount().address, PASSWORD).catch(() => undefined);
+
+  const { data } = await otherDevice.supabase.auth.getSession();
+  assert(data.session === null, 'a failed sign-in left a live session behind');
+  assert(otherDevice.currentAccount() === null, 'a failed sign-in left an account set');
+});
+
+await check('a refused sign-in does not displace the account already on the device', async () => {
+  // Bob's device holds Bob's keys. Someone typing Alice's address into it must
+  // not cost Bob his session.
+  const bobsDevice = newClient();
+  await bobsDevice.register(`qa-c-${suffix}`, PASSWORD);
+  cleanup.push(bobsDevice.currentAccount().id);
+  cleanupAddresses.push(bobsDevice.currentAccount().address);
+  const owner = bobsDevice.currentAccount().address;
+
+  await bobsDevice.login(alice.currentAccount().address, PASSWORD).catch(() => undefined);
+
+  assert(
+    (await bobsDevice.lastAddress()) === owner,
+    'the failed attempt overwrote which account this device belongs to',
+  );
+  assert(
+    await bobsDevice.hasLocalKeys(owner),
+    'the device lost track of the keys it actually holds',
+  );
+});
+
+// --- 6. Locking ------------------------------------------------------------
 
 await check('locking makes the mailbox unreadable until unlocked again', async () => {
   bob.lock();
@@ -295,12 +354,11 @@ if (ACCESS_TOKEN && cleanup.length) {
     console.log(`  cleaned up ${cleanup.length} test accounts`);
   } catch (error) {
     console.log(`  could not clean up automatically: ${error.message}`);
-    console.log(`  remove these by hand: qa-a-${suffix}@qmail.com, qa-b-${suffix}@qmail.com`);
+    console.log(`  remove these by hand: ${cleanupAddresses.join(', ')}`);
   }
 } else {
-  console.log(
-    `  no SUPABASE_ACCESS_TOKEN, so these were left behind: qa-a-${suffix}@qmail.com, qa-b-${suffix}@qmail.com`,
-  );
+  console.log(`  no SUPABASE_ACCESS_TOKEN, so these were left behind:`);
+  console.log(`  ${cleanupAddresses.join('\n  ')}`);
 }
 
 await releasePqc();
