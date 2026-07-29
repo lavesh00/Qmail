@@ -31,11 +31,16 @@
   max-width: 380px;
 }
 
+/*
+ * The mark is identity, not emphasis. Accent is reserved for the thing the
+ * screen is asking you to do — here, the submit button — so the brand stays
+ * neutral rather than competing with it.
+ */
 .auth__brand {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  color: var(--accent);
+  color: var(--paper-dim);
   margin-bottom: var(--space-7);
 }
 

@@ -49,7 +49,8 @@ function Shell({
       <Lattice />
       <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
         <View style={styles.brand}>
-          <Icon name="shield" size={22} color={colors.accent} />
+          {/* Neutral: the accent belongs to the primary action, not the mark. */}
+        <Icon name="shield" size={22} color={colors.paperDim} />
           <Text style={styles.wordmark}>Qmail</Text>
         </View>
         <Text style={styles.title}>{title}</Text>

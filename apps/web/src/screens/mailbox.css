@@ -13,13 +13,14 @@
   border-right: 1px solid var(--ink-line);
 }
 
+/* Neutral for the same reason as on the auth screens: Compose owns the accent. */
 .rail__brand {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   padding: 0 var(--space-2);
   margin-bottom: var(--space-6);
-  color: var(--accent);
+  color: var(--paper-dim);
 }
 
 .rail__wordmark {
