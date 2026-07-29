@@ -6,6 +6,14 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--workspace", "@qmail/web"],
       "port": 5173
+    },
+    {
+      "name": "csp-preview",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "C:\\Users\\kunda\\AppData\\Local\\Temp\\claude\\A--qmail\\27d9b798-9684-4a25-a19b-6d83d0dd28df\\scratchpad\\csp-preview.mjs"
+      ],
+      "port": 4173
     }
   ]
 }
