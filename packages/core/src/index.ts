@@ -19,6 +19,25 @@ export {
   type SecureStorage,
 } from './storage.js';
 
+export type {
+  CryptoEngine,
+  EngineAttachment,
+  EngineOpenInput,
+  EngineOpenOutput,
+  EngineSealInput,
+  PublicKeys,
+} from './engine.js';
+
+export { createLocalEngine } from './local-engine.js';
+
+export {
+  clearDrafts,
+  deleteDraft,
+  listDrafts,
+  saveDraft,
+  type Draft,
+} from './drafts.js';
+
 export {
   envelopeToInsert,
   rowToEnvelope,

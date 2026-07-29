@@ -135,11 +135,127 @@
   letter-spacing: -0.01em;
 }
 
-.panel__headAction {
-  width: auto;
+.panel__headActions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   margin-left: auto;
+}
+
+.panel__headActions .button {
+  width: auto;
   padding: 6px 14px;
   font-size: 13px;
+}
+
+.panel__searchNote {
+  margin: 0 0 var(--space-4);
+  max-width: 620px;
+  line-height: 1.6;
+}
+
+/* --- search -------------------------------------------------------------- */
+
+.search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+  padding: 5px 10px;
+  border: 1px solid var(--ink-line);
+  border-radius: var(--radius);
+  color: var(--paper-faint);
+}
+
+.search:focus-within {
+  border-color: var(--paper-faint);
+}
+
+.search__input {
+  width: 190px;
+  background: transparent;
+  border: none;
+  color: var(--paper);
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.search__input:focus {
+  outline: none;
+}
+
+.search__input::placeholder {
+  color: var(--paper-faint);
+}
+
+/* --- drafts -------------------------------------------------------------- */
+
+.draft {
+  display: flex;
+  align-items: stretch;
+}
+
+.draft__open {
+  flex: 1;
+  min-width: 0;
+}
+
+.draft__discard {
+  align-self: center;
+  margin-left: var(--space-2);
+}
+
+.compose__saveDraft {
+  font-size: 13px;
+  margin-left: auto;
+}
+
+.compose__send {
+  width: auto;
+  margin-left: 0;
+  padding: 8px 20px;
+  font-size: 14px;
+}
+
+/* --- contacts ------------------------------------------------------------ */
+
+.contacts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-width: 620px;
+}
+
+.contact {
+  padding: var(--space-4) 0;
+  border-bottom: 1px solid var(--ink-line);
+}
+
+.contact__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.contact__address {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--paper);
+}
+
+.contact__write {
+  margin-left: auto;
+  font-size: 13px;
+}
+
+.contact__fingerprint {
+  margin: 0;
+  color: var(--paper-faint);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.8;
+  word-break: break-all;
 }
 
 .panel__muted {

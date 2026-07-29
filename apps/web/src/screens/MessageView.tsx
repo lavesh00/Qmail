@@ -8,13 +8,16 @@ export function MessageView({
   id,
   onBack,
   onReply,
+  onDiscarded,
 }: {
   id: string;
   onBack: () => void;
   onReply: (to: string, subject: string) => void;
+  onDiscarded: () => void;
 }) {
   const [mail, setMail] = useState<OpenedMail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -62,18 +65,38 @@ export function MessageView({
           <Icon name="back" size={18} label="Back" />
         </button>
         {mail ? (
-          <button
-            type="button"
-            className="button button--quiet panel__headAction"
-            onClick={() =>
-              onReply(
-                mail.role === 'recipient' ? mail.from : mail.to,
-                mail.subject.startsWith('Re: ') ? mail.subject : `Re: ${mail.subject}`,
-              )
-            }
-          >
-            Reply
-          </button>
+          <div className="panel__headActions">
+            <button
+              type="button"
+              className="button button--quiet"
+              onClick={() =>
+                onReply(
+                  mail.role === 'recipient' ? mail.from : mail.to,
+                  mail.subject.startsWith('Re: ') ? mail.subject : `Re: ${mail.subject}`,
+                )
+              }
+            >
+              Reply
+            </button>
+            <button
+              type="button"
+              className="iconbutton"
+              disabled={busy}
+              title="Move my copy to trash"
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  await qmail.moveToTrash(mail.id, mail.role);
+                  onDiscarded();
+                } catch (cause) {
+                  setError(cause instanceof Error ? cause.message : 'Could not discard it.');
+                  setBusy(false);
+                }
+              }}
+            >
+              <Icon name="trash" size={18} label="Move my copy to trash" />
+            </button>
+          </div>
         ) : null}
       </header>
 

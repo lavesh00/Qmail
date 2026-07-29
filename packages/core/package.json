@@ -10,6 +10,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./local-engine": {
+      "types": "./dist/local-engine.d.ts",
+      "default": "./dist/local-engine.js"
+    },
+    "./engine": {
+      "types": "./dist/engine.d.ts",
+      "default": "./dist/engine.js"
     }
   },
   "files": [

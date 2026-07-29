@@ -3,28 +3,15 @@
  *
  * Both the web and mobile clients drive this same object, so registration,
  * sending, receiving and trash behave identically on each and only have to be
- * reasoned about once. The two things that genuinely differ per platform —
- * where the encrypted keystore is written, and which WebCrypto implementation
- * is in use — are injected rather than branched on.
+ * reasoned about once. Three things genuinely differ per platform and are all
+ * injected rather than branched on: where the encrypted keystore is written,
+ * how the auth session is persisted, and which crypto engine executes the
+ * cryptography.
  */
-import {
-  fromBase64,
-  generateIdentity,
-  identityFingerprint,
-  openKeystore,
-  openMessage,
-  sealKeystore,
-  sealMessage,
-  splitIdentity,
-  toBase64,
-  verifyEnvelope,
-  warmUp,
-  type Attachment,
-  type EncryptedKeystore,
-  type MessageContent,
-  type SecretIdentity,
-} from '@qmail/crypto';
+import { fromBase64, toBase64, type Attachment } from '@qmail/crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { CryptoEngine } from './engine.js';
+import { createLocalEngine } from './local-engine.js';
 import {
   envelopeToInsert,
   rowToEnvelope,
@@ -113,10 +100,23 @@ export interface Account {
   address: string;
 }
 
+/** Plaintext held in memory for listing and search. */
+interface DecryptedContent {
+  subject: string;
+  body: string;
+  attachmentName?: string;
+}
+
 export interface QmailClientOptions {
   supabaseUrl: string;
   supabaseAnonKey: string;
   storage: SecureStorage;
+  /**
+   * Where the cryptography actually runs. Defaults to in-process, which is
+   * correct for browsers and Node. React Native supplies a WebView-backed
+   * engine, because Hermes can host neither WebAssembly nor WebCrypto.
+   */
+  engine?: CryptoEngine;
   /** Passed through to supabase-js; mobile supplies an async storage adapter. */
   authStorage?: {
     getItem(key: string): Promise<string | null> | string | null;
@@ -131,17 +131,33 @@ export function createQmailClient(options: QmailClientOptions): QmailClient {
 
 export class QmailClient {
   readonly supabase: SupabaseClient;
+  readonly engine: CryptoEngine;
   private readonly storage: SecureStorage;
 
-  /** Decrypted secret keys. In memory only, cleared on lock or logout. */
-  private secrets: SecretIdentity | null = null;
   private account: Account | null = null;
+  /**
+   * Mirrors the engine's lock state so the UI can ask synchronously. The engine
+   * remains the authority; this is only ever set alongside a call to it.
+   */
+  private unlocked = false;
 
   /** Public keys of correspondents, so a repeat send skips the lookup. */
   private readonly contactCache = new Map<string, Contact>();
 
+  /**
+   * Decrypted message text, held in memory only.
+   *
+   * This is what local search searches. It is never written to disk: the point
+   * of the whole design is that plaintext exists only while the app is open and
+   * unlocked, and a cache on disk would quietly undo that. The cost is that
+   * search covers what this session has decrypted, which is exactly what the
+   * server being unable to index ciphertext implies.
+   */
+  private readonly contentCache = new Map<string, DecryptedContent>();
+
   constructor(options: QmailClientOptions) {
     this.storage = options.storage;
+    this.engine = options.engine ?? createLocalEngine();
     this.supabase = createClient(options.supabaseUrl, options.supabaseAnonKey, {
       auth: {
         persistSession: true,
@@ -197,11 +213,14 @@ export class QmailClient {
    * Create an account.
    *
    * Keys are generated on this device before anything is sent anywhere, and
-   * only the public halves ever leave it. The secret halves are encrypted under
-   * the password and written to local storage; the server sees neither them nor
-   * the password.
+   * only the public halves ever leave it. The secret halves are held by the
+   * crypto engine, sealed under the password, and written to local storage; the
+   * server sees neither them nor the password.
    */
-  async register(handle: string, password: string): Promise<{ address: string; fingerprint: string }> {
+  async register(
+    handle: string,
+    password: string,
+  ): Promise<{ address: string; fingerprint: string }> {
     const problem = QmailClient.validateHandle(handle);
     if (problem) {
       throw new QmailError(problem);
@@ -211,9 +230,8 @@ export class QmailClient {
 
     // Generating the identity first means a slow keygen cannot leave a
     // half-registered account behind if the user closes the tab.
-    await warmUp();
-    const identity = await generateIdentity();
-    const { secrets, kemPublicKey, sigPublicKey } = splitIdentity(identity);
+    await this.engine.warmUp();
+    const keys = await this.engine.createIdentity();
 
     const { data, error } = await this.supabase.auth.signUp({ email: address, password });
     if (error) {
@@ -226,8 +244,8 @@ export class QmailClient {
     const { error: profileError } = await this.supabase.from('users').insert({
       id: data.user.id,
       address,
-      kem_public_key: toBase64(kemPublicKey),
-      sig_public_key: toBase64(sigPublicKey),
+      kem_public_key: keys.kemPublicKey,
+      sig_public_key: keys.sigPublicKey,
     });
     if (profileError) {
       throw new QmailError(
@@ -238,17 +256,14 @@ export class QmailClient {
       );
     }
 
-    const keystore = await sealKeystore(secrets, password);
+    const keystore = await this.engine.exportKeystore(password);
     await this.storage.set(keystoreKey(address), JSON.stringify(keystore));
     await this.storage.set(LAST_ADDRESS_KEY, address);
 
-    this.secrets = secrets;
+    this.unlocked = true;
     this.account = { id: data.user.id, address };
 
-    return {
-      address,
-      fingerprint: await identityFingerprint({ kemPublicKey, sigPublicKey }),
-    };
+    return { address, fingerprint: await this.engine.fingerprint(keys) };
   }
 
   private describeSignUpError(message: string): string {
@@ -286,7 +301,7 @@ export class QmailClient {
   }
 
   /**
-   * Decrypt this device's keystore into memory.
+   * Decrypt this device's keystore into the crypto engine.
    *
    * Called on sign-in, and again after a restart: the session survives, but the
    * secret keys are encrypted at rest and there is nowhere safe to keep the
@@ -306,8 +321,9 @@ export class QmailClient {
       );
     }
 
-    const keystore = JSON.parse(raw) as EncryptedKeystore;
-    this.secrets = await openKeystore(keystore, password);
+    await this.engine.warmUp();
+    await this.engine.importKeystore(JSON.parse(raw), password);
+    this.unlocked = true;
 
     if (!this.account) {
       const { data } = await this.supabase.auth.getUser();
@@ -346,23 +362,32 @@ export class QmailClient {
   }
 
   isUnlocked(): boolean {
-    return this.secrets !== null;
+    return this.unlocked;
   }
 
   currentAccount(): Account | null {
     return this.account;
   }
 
-  /** Drop the decrypted keys but keep the session. */
+  /**
+   * Drop the decrypted keys but keep the session.
+   *
+   * The plaintext cache goes too. Locking that left readable message bodies
+   * sitting in memory would be a lock in name only.
+   */
   lock(): void {
-    this.secrets = null;
+    this.unlocked = false;
+    this.contentCache.clear();
+    void this.engine.lock();
   }
 
   /** Sign out. The encrypted keystore stays, so this device can sign in again. */
   async logout(): Promise<void> {
-    this.secrets = null;
+    this.unlocked = false;
     this.account = null;
     this.contactCache.clear();
+    this.contentCache.clear();
+    await this.engine.lock();
     await this.supabase.auth.signOut();
   }
 
@@ -375,15 +400,16 @@ export class QmailClient {
   async forgetKeys(address: string): Promise<void> {
     await this.storage.remove(keystoreKey(address));
     await this.storage.remove(LAST_ADDRESS_KEY);
-    this.secrets = null;
+    this.unlocked = false;
+    await this.engine.lock();
   }
 
   /** This account's key fingerprint, for verifying out of band. */
   async fingerprint(): Promise<string> {
     const me = await this.requireProfile();
-    return identityFingerprint({
-      kemPublicKey: fromBase64(me.kem_public_key),
-      sigPublicKey: fromBase64(me.sig_public_key),
+    return this.engine.fingerprint({
+      kemPublicKey: me.kem_public_key,
+      sigPublicKey: me.sig_public_key,
     });
   }
 
@@ -398,11 +424,10 @@ export class QmailClient {
     return this.account;
   }
 
-  private requireSecrets(): SecretIdentity {
-    if (!this.secrets) {
+  private requireUnlocked(): void {
+    if (!this.unlocked) {
       throw new QmailError('This device is locked. Enter your password to unlock your mailbox.');
     }
-    return this.secrets;
   }
 
   private async requireProfile(): Promise<UserRow> {
@@ -512,7 +537,7 @@ export class QmailClient {
     attachment?: Attachment;
   }): Promise<{ id: string }> {
     const account = this.requireAccount();
-    const secrets = this.requireSecrets();
+    this.requireUnlocked();
 
     if (input.attachment && input.attachment.data.length > MAX_ATTACHMENT_BYTES) {
       throw new QmailError(
@@ -521,11 +546,6 @@ export class QmailClient {
     }
 
     const recipientAddress = input.to.trim().toLowerCase();
-    if (recipientAddress === account.address) {
-      // Sending to yourself would encapsulate to the same key twice, which is
-      // harmless but produces a message that appears in both folders. Allowed,
-      // but worth being deliberate about rather than accidental.
-    }
 
     const [recipientRow, me] = await Promise.all([
       this.supabase
@@ -545,19 +565,22 @@ export class QmailClient {
       );
     }
 
-    const content: MessageContent = {
+    const envelope = await this.engine.seal({
       subject: input.subject,
       body: input.body,
-      ...(input.attachment ? { attachment: input.attachment } : {}),
-    };
-
-    const envelope = await sealMessage({
-      content,
+      ...(input.attachment
+        ? {
+            attachment: {
+              filename: input.attachment.filename,
+              mimeType: input.attachment.mimeType,
+              data: toBase64(input.attachment.data),
+            },
+          }
+        : {}),
       from: me.address,
       to: recipientRow.data.address,
-      recipientKemPublicKey: fromBase64(recipientRow.data.kem_public_key),
-      senderKemPublicKey: fromBase64(me.kem_public_key),
-      senderSigSecretKey: secrets.sigSecretKey,
+      recipientKemPublicKey: recipientRow.data.kem_public_key,
+      senderKemPublicKey: me.kem_public_key,
     });
 
     const { data, error } = await this.supabase
@@ -582,7 +605,7 @@ export class QmailClient {
 
   private describeSendError(error: { message?: string } | null): string {
     const message = error?.message ?? '';
-    if (/fetch|network|Failed to fetch/i.test(message)) {
+    if (/fetch|network|Failed to fetch|Load failed/i.test(message)) {
       return 'Could not reach the server. Your message was not sent — nothing was lost, try again when you are back online.';
     }
     return 'Your message could not be sent.';
@@ -619,27 +642,102 @@ export class QmailClient {
     }
 
     const rows = data ?? [];
-    const addresses = new Set(rows.map((row) => row.sender_address.toLowerCase()));
-    await this.prefetchSenders(addresses);
+    await this.prefetchSenders(new Set(rows.map((row) => row.sender_address.toLowerCase())));
 
-    return Promise.all(
-      rows.map(async (row) => {
-        const role: 'recipient' | 'sender' = row.recipient_id === account.id ? 'recipient' : 'sender';
-        const sender = this.contactCache.get(row.sender_address.toLowerCase());
-        const verified = sender
-          ? await verifyEnvelope(rowToEnvelope(row), sender.sigPublicKey)
-          : null;
-        return {
-          id: row.id,
-          from: row.sender_address,
-          to: row.recipient_address,
-          sentAt: new Date(row.sent_at).toISOString(),
-          read: row.read,
-          role,
-          verified,
-        };
-      }),
-    );
+    const summaries: MessageSummary[] = [];
+    for (const row of rows) {
+      const role: 'recipient' | 'sender' = row.recipient_id === account.id ? 'recipient' : 'sender';
+      const sender = this.contactCache.get(row.sender_address.toLowerCase());
+      const envelope = rowToEnvelope(row);
+
+      const verified = sender
+        ? await this.engine.verifyEnvelope(envelope, toBase64(sender.sigPublicKey))
+        : null;
+
+      // Subjects are ciphertext like everything else, so showing them in a list
+      // means decrypting them. Doing it here rather than on open is also what
+      // populates the cache that local search reads.
+      const content = this.unlocked ? await this.decryptInto(row, envelope, role, sender) : undefined;
+
+      summaries.push({
+        id: row.id,
+        from: row.sender_address,
+        to: row.recipient_address,
+        sentAt: new Date(row.sent_at).toISOString(),
+        read: row.read,
+        role,
+        verified,
+        ...(content ? { subject: content.subject } : {}),
+      });
+    }
+    return summaries;
+  }
+
+  /**
+   * Decrypt a row into the in-memory cache.
+   *
+   * Failure is not fatal here: one unreadable message — a corrupted row, or one
+   * encrypted to keys this device no longer holds — must not stop the rest of
+   * the folder from listing.
+   */
+  private async decryptInto(
+    row: MessageRow,
+    envelope: ReturnType<typeof rowToEnvelope>,
+    role: 'recipient' | 'sender',
+    sender: Contact | undefined,
+  ): Promise<DecryptedContent | undefined> {
+    const cached = this.contentCache.get(row.id);
+    if (cached) {
+      return cached;
+    }
+    try {
+      const opened = await this.engine.open({
+        envelope,
+        role,
+        ...(sender ? { senderSigPublicKey: toBase64(sender.sigPublicKey) } : {}),
+      });
+      const content: DecryptedContent = {
+        subject: opened.subject,
+        body: opened.body,
+        ...(opened.attachment ? { attachmentName: opened.attachment.filename } : {}),
+      };
+      this.contentCache.set(row.id, content);
+      return content;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Search the messages this device has decrypted.
+   *
+   * The server stores ciphertext and cannot index it, so there is no
+   * server-side search to fall back on. This is the honest scope of search in a
+   * genuinely end-to-end encrypted mailbox, not a reduced version of one.
+   */
+  search(summaries: MessageSummary[], query: string): MessageSummary[] {
+    const needle = query.trim().toLowerCase();
+    if (!needle) {
+      return summaries;
+    }
+    return summaries.filter((summary) => {
+      const content = this.contentCache.get(summary.id);
+      const haystack = [
+        summary.from,
+        summary.to,
+        content?.subject ?? '',
+        content?.body ?? '',
+        content?.attachmentName ?? '',
+      ]
+        .join('\n')
+        .toLowerCase();
+      return haystack.includes(needle);
+    });
+  }
+
+  /** Whether a message's plaintext is available to search. */
+  hasDecrypted(id: string): boolean {
+    return this.contentCache.has(id);
   }
 
   /** Warm the contact cache for a batch of addresses in one query. */
@@ -666,7 +764,7 @@ export class QmailClient {
   /** Fetch and decrypt one message. */
   async open(id: string): Promise<OpenedMail> {
     const account = this.requireAccount();
-    const secrets = this.requireSecrets();
+    this.requireUnlocked();
 
     const { data, error } = await this.supabase
       .from('messages')
@@ -680,11 +778,10 @@ export class QmailClient {
     const role: 'recipient' | 'sender' = data.recipient_id === account.id ? 'recipient' : 'sender';
     const sender = await this.lookup(data.sender_address).catch(() => null);
 
-    const opened = await openMessage({
+    const opened = await this.engine.open({
       envelope: rowToEnvelope(data),
-      kemSecretKey: secrets.kemSecretKey,
       role,
-      ...(sender ? { senderSigPublicKey: sender.sigPublicKey } : {}),
+      ...(sender ? { senderSigPublicKey: toBase64(sender.sigPublicKey) } : {}),
     });
 
     return {
@@ -692,9 +789,17 @@ export class QmailClient {
       from: data.sender_address,
       to: data.recipient_address,
       sentAt: new Date(data.sent_at).toISOString(),
-      subject: opened.content.subject,
-      body: opened.content.body,
-      ...(opened.content.attachment ? { attachment: opened.content.attachment } : {}),
+      subject: opened.subject,
+      body: opened.body,
+      ...(opened.attachment
+        ? {
+            attachment: {
+              filename: opened.attachment.filename,
+              mimeType: opened.attachment.mimeType,
+              data: fromBase64(opened.attachment.data),
+            },
+          }
+        : {}),
       verified: opened.verified,
       role,
       read: data.read,

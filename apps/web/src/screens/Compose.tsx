@@ -1,22 +1,39 @@
 import { useState, type ChangeEvent, type FormEvent } from 'react';
-import { MAX_ATTACHMENT_BYTES, QMAIL_DOMAIN, QmailError, type Attachment } from '@qmail/core';
+import {
+  MAX_ATTACHMENT_BYTES,
+  QMAIL_DOMAIN,
+  QmailError,
+  deleteDraft,
+  saveDraft,
+  type Attachment,
+  type Draft,
+} from '@qmail/core';
 import { qmail } from '../lib/qmail';
+import { createIndexedDbStorage } from '../lib/indexeddb-storage';
 import { Icon } from '../ui/Icon';
 
+const storage = createIndexedDbStorage();
+
 export function Compose({
+  address,
+  draft,
   initialTo,
   initialSubject,
   onCancel,
   onSent,
+  onSavedDraft,
 }: {
+  address: string;
+  draft?: Draft;
   initialTo: string;
   initialSubject: string;
   onCancel: () => void;
   onSent: () => void;
+  onSavedDraft: () => void;
 }) {
-  const [to, setTo] = useState(initialTo.replace(`@${QMAIL_DOMAIN}`, ''));
-  const [subject, setSubject] = useState(initialSubject);
-  const [body, setBody] = useState('');
+  const [to, setTo] = useState((draft?.to ?? initialTo).replace(`@${QMAIL_DOMAIN}`, ''));
+  const [subject, setSubject] = useState(draft?.subject ?? initialSubject);
+  const [body, setBody] = useState(draft?.body ?? '');
   const [attachment, setAttachment] = useState<Attachment | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -39,6 +56,16 @@ export function Compose({
     });
   }
 
+  async function onSaveDraft() {
+    await saveDraft(storage, address, {
+      ...(draft?.id ? { id: draft.id } : {}),
+      to,
+      subject,
+      body,
+    });
+    onSavedDraft();
+  }
+
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     if (!to.trim() || sending) return;
@@ -52,6 +79,10 @@ export function Compose({
         body,
         ...(attachment ? { attachment } : {}),
       });
+      // Only once it is genuinely delivered does the draft stop being needed.
+      if (draft?.id) {
+        await deleteDraft(storage, address, draft.id);
+      }
       onSent();
     } catch (cause) {
       setError(cause instanceof QmailError ? cause.message : 'Your message could not be sent.');
@@ -62,10 +93,10 @@ export function Compose({
   return (
     <>
       <header className="panel__head">
-        <button type="button" className="iconbutton" onClick={onCancel} title="Discard">
-          <Icon name="back" size={18} label="Discard" />
+        <button type="button" className="iconbutton" onClick={onCancel} title="Close">
+          <Icon name="back" size={18} label="Close" />
         </button>
-        <h1 className="panel__title">New message</h1>
+        <h1 className="panel__title">{draft ? 'Edit draft' : 'New message'}</h1>
       </header>
 
       {error ? (
@@ -138,6 +169,15 @@ export function Compose({
               Remove
             </button>
           ) : null}
+
+          <button
+            type="button"
+            className="link compose__saveDraft"
+            onClick={() => void onSaveDraft()}
+            disabled={sending}
+          >
+            Save draft
+          </button>
 
           <button type="submit" className="button compose__send" disabled={!to.trim() || sending}>
             {sending ? 'Encrypting and sending…' : 'Send'}
