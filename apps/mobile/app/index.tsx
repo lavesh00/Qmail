@@ -1,115 +1,36 @@
-import { useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
-import type { ParityReport } from '@qmail/crypto';
-import { createWebViewEngine } from '../lib/webview-engine';
-import { colors, space } from '../theme/colors';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { useSession } from '../state/session';
+import { Auth, Unlock } from '../screens/Auth';
+import { Mailbox } from '../screens/Mailbox';
+import { colors } from '../theme/colors';
 
 /**
- * Runs the shared crypto module's parity check through the WebView bridge.
- *
- * This screen is the evidence for the whole mobile approach. Hermes cannot host
- * the crypto, so it runs in a WebView instead — and the only thing that
- * distinguishes "same module, different execution context" from "quietly
- * different cryptography" is whether this digest matches the one Node and the
- * browser produce.
+ * Which surface is shown follows from session state, exactly as on web: signed
+ * out, signed in but locked, or ready. There is no route that can put the app
+ * in a state its keys do not support.
  */
-export default function Parity() {
-  const [report, setReport] = useState<ParityReport | null>(null);
-  const [error, setError] = useState<string | null>(null);
+export default function Index() {
+  const { state } = useSession();
 
-  useEffect(() => {
-    let cancelled = false;
-    const engine = createWebViewEngine();
+  if (state.status === 'loading') {
+    return (
+      <View style={styles.centre}>
+        <ActivityIndicator color={colors.accent} />
+      </View>
+    );
+  }
 
-    (async () => {
-      try {
-        const result = await engine.parityCheck('mobile (android, webview bridge)');
-        console.log(`QMAIL_PARITY digest=${result.digest} passed=${result.passed}`);
-        for (const check of result.checks) {
-          if (!check.passed) {
-            console.log(`QMAIL_PARITY FAIL ${check.name}: ${check.detail ?? ''}`);
-          }
-        }
-        if (!cancelled) setReport(result);
-      } catch (cause) {
-        const detail = cause instanceof Error ? cause.message : String(cause);
-        console.log(`QMAIL_PARITY ERROR ${detail}`);
-        if (!cancelled) setError(detail);
-      }
-    })();
+  if (state.status === 'locked') {
+    return <Unlock address={state.address} />;
+  }
 
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  if (state.status === 'ready') {
+    return <Mailbox account={state.account} />;
+  }
 
-  return (
-    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Crypto parity check</Text>
-      <Text style={styles.meta}>
-        Cryptography runs in a WebView, because Hermes provides neither WebAssembly nor WebCrypto.
-      </Text>
-
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-
-      {report ? (
-        <>
-          <Text style={styles.meta}>
-            {report.platform} · {report.checks.length} checks · {report.elapsedMs} ms
-          </Text>
-
-          <View style={styles.digest}>
-            <Text style={styles.digestLabel}>DIGEST</Text>
-            <Text style={styles.digestValue}>{report.digest}</Text>
-          </View>
-
-          {report.checks.map((check) => (
-            <View key={check.name} style={styles.row}>
-              <Text style={check.passed ? styles.pass : styles.fail}>
-                {check.passed ? 'pass' : 'fail'}
-              </Text>
-              <View style={styles.rowBody}>
-                <Text style={styles.name}>{check.name}</Text>
-                {check.detail ? <Text style={styles.detail}>{check.detail}</Text> : null}
-              </View>
-            </View>
-          ))}
-
-          <Text style={report.passed ? styles.verdictPass : styles.verdictFail}>
-            {report.passed
-              ? 'All checks passed. This digest must match the Node and browser runs.'
-              : 'This platform does not match. The failing checks are listed above.'}
-          </Text>
-        </>
-      ) : error ? null : (
-        <Text style={styles.meta}>Starting the crypto bridge…</Text>
-      )}
-    </ScrollView>
-  );
+  return <Auth />;
 }
 
-const mono = 'monospace';
-
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: colors.ink },
-  content: { padding: space.s5, paddingTop: space.s8, paddingBottom: space.s8 },
-  title: { color: colors.paper, fontSize: 22, fontWeight: '600', marginBottom: space.s2 },
-  meta: { color: colors.paperFaint, fontSize: 13, marginBottom: space.s4, lineHeight: 19 },
-  digest: {
-    borderLeftWidth: 2,
-    borderLeftColor: colors.accent,
-    paddingLeft: space.s4,
-    marginBottom: space.s5,
-  },
-  digestLabel: { color: colors.paperFaint, fontSize: 11, letterSpacing: 1, marginBottom: space.s1 },
-  digestValue: { color: colors.paper, fontFamily: mono, fontSize: 12 },
-  row: { flexDirection: 'row', gap: space.s3, paddingVertical: space.s2 },
-  rowBody: { flex: 1 },
-  pass: { color: colors.stateVerified, fontFamily: mono, fontSize: 11, width: 34, paddingTop: 3 },
-  fail: { color: colors.stateFailed, fontFamily: mono, fontSize: 11, width: 34, paddingTop: 3 },
-  name: { color: colors.paperDim, fontSize: 14, flex: 1 },
-  detail: { color: colors.stateFailed, fontFamily: mono, fontSize: 11, marginTop: space.s1 },
-  error: { color: colors.stateFailed, fontFamily: mono, fontSize: 12, marginBottom: space.s4 },
-  verdictPass: { color: colors.stateVerified, fontSize: 14, marginTop: space.s4 },
-  verdictFail: { color: colors.stateFailed, fontSize: 14, marginTop: space.s4 },
+  centre: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ink },
 });

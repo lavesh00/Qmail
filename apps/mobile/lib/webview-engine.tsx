@@ -114,7 +114,15 @@ export function CryptoHost() {
     <View style={styles.hidden} pointerEvents="none">
       <WebView
         ref={ref}
-        source={{ html: CRYPTO_HOST_HTML }}
+        /*
+         * `baseUrl` is load-bearing, not decoration. An inline document loads
+         * with an opaque origin, and browsers only expose `crypto.subtle` in a
+         * secure context — so without an https base URL the WebView has
+         * WebAssembly but no WebCrypto, and the crypto module refuses to start.
+         * Nothing is fetched from this address; the document is still the
+         * inline string, and its CSP forbids network access outright.
+         */
+        source={{ html: CRYPTO_HOST_HTML, baseUrl: 'https://crypto.qmail.invalid/' }}
         originWhitelist={['*']}
         javaScriptEnabled
         // The document is inline and its CSP forbids network access, so there
