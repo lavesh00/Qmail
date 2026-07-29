@@ -16,14 +16,29 @@ Final-year capstone project, NMIMS MPSTME.
 ```
 packages/crypto     Shared crypto module. Written and tested once, imported
                     identically by both clients.
+packages/core       Account, mailbox and contact logic. Also shared, so the
+                    mailbox is reasoned about once rather than twice.
 apps/web            React + Vite client, deployed on Vercel.
 apps/mobile         React Native client via Expo (SDK 57 / RN 0.86).
-supabase/           Database schema and migrations.
+supabase/           Schema, migrations, and the integration and QA scripts.
 ```
 
 The monorepo uses npm workspaces. `@qmail/crypto` is consumed as a workspace
 dependency by both apps, so there is exactly one implementation of every
-cryptographic operation.
+cryptographic operation. `@qmail/core` sits above it and talks to a
+`CryptoEngine` rather than to the crypto directly — in-process on web and Node,
+and over a bridge on mobile.
+
+## Checks
+
+```bash
+npm run test --workspace @qmail/crypto   # 80 unit and parity tests
+node supabase/verify-backend.mjs         # schema and access rules, live
+node supabase/qa-end-to-end.mjs          # end-to-end QA, live
+```
+
+The two live scripts write to whatever project `apps/web/.env.local` points at
+and clean up after themselves.
 
 ## Stack
 
@@ -34,11 +49,51 @@ cryptographic operation.
 | Content cipher     | AES-256-GCM (Web Crypto API)                        |
 | Backend            | Supabase — Postgres, Auth, Storage, Edge Functions  |
 | Web                | React 19 + Vite                                     |
-| Mobile             | Expo SDK 57, React Native 0.86, Hermes              |
+| Mobile             | Expo SDK 57, React Native 0.86                      |
 
-React Native 0.86 is required: it is past the release where WebAssembly landed
-natively in Hermes, which is what lets the same WASM crypto module run unmodified
-on both platforms.
+### How the crypto runs on mobile
+
+React Native 0.86 ships Hermes v0.17.0, which provides **neither WebAssembly nor
+WebCrypto**. This was checked on a device rather than assumed — a capability
+probe in a release build reported `wasm=false` and `subtle=false`, and there is
+no build flag in the React Native or Expo trees that enables either.
+
+So on mobile the crypto module runs inside a WebView, whose Chromium engine has
+both, and React Native talks to it over a message channel. No algorithm is
+reimplemented and no cipher is substituted: it is the same compiled liboqs and
+the same `packages/crypto` the web client uses.
+
+Two things follow from bridging the *engine* rather than the individual
+primitives. A send costs one round trip instead of a dozen KEM calls. And
+decrypted private keys are created inside the WebView and stay there — React
+Native asks for a message to be sealed or opened and never holds a secret key in
+its own heap.
+
+**If you are working on the mobile app**, anything that actually computes must go
+through `qmail.engine`. Importing a function from `@qmail/crypto` and calling it
+directly will run it in Hermes and throw. Only constants and pure JavaScript
+(`ALGORITHMS`, `toBase64`) are safe to call there.
+
+### Proving it is the same cryptography
+
+`packages/crypto` exposes `runParityCheck()`, which replays a frozen set of
+inputs and returns a digest over the actual computed outputs. Node, Chromium and
+the Android WebView all produce:
+
+```
+776cc000bb5190ac01dd8ab12b294ff6a77f90aec5443080c0c1825d2619c6ac
+```
+
+Any platform that does not is running different cryptography. There is a
+diagnostics screen for it in the mobile app under Settings, and at `#parity` on
+web.
+
+NIST's known-answer vectors for ML-KEM and ML-DSA cannot be replayed through this
+package, because liboqs-js exposes no way to inject the deterministic seed they
+depend on. Instead every post-quantum operation is cross-validated against
+`@noble/post-quantum`, an independent pure-JavaScript FIPS 203/204
+implementation, with keys, ciphertexts and signatures crossing in both
+directions.
 
 ## Getting started
 
